@@ -7,6 +7,20 @@ from .exceptions import APIError, AuthError, BleoError, RatelimitError
 from .models import (
     Automatic,
     ClaudeHaiku,
+    ClaudeSonnet,
+    ClaudeOpus,
+    GptLuna,
+    GptTerra,
+    GptOss120b,
+    Qwen36,
+    Qwen38,
+    Glm47Flash,
+    Glm53,
+    Grok,
+    Kimi,
+    Deepseek,
+    Nemotron,
+    MistralLarge,
     GptOss20b,
     Llama31_8b,
     Llama4Maverick,
@@ -23,10 +37,12 @@ from .models import (
     Message,
     Role,
     list_models,
+    model_info,
+    refresh_models,
     resolve_model,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Bleo",
@@ -36,6 +52,20 @@ __all__ = [
     "APIError",
     "Automatic",
     "ClaudeHaiku",
+    "ClaudeSonnet",
+    "ClaudeOpus",
+    "GptLuna",
+    "GptTerra",
+    "GptOss120b",
+    "Qwen36",
+    "Qwen38",
+    "Glm47Flash",
+    "Glm53",
+    "Grok",
+    "Kimi",
+    "Deepseek",
+    "Nemotron",
+    "MistralLarge",
     "GptOss20b",
     "Llama31_8b",
     "Llama4Maverick",
@@ -52,6 +82,8 @@ __all__ = [
     "Message",
     "Role",
     "list_models",
+    "model_info",
+    "refresh_models",
     "resolve_model",
 ]
 

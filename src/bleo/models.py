@@ -1,17 +1,31 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from copy import deepcopy
+import json
+from pathlib import Path
 from typing import Dict, List, Optional, Union
 
-# --- Brave Leo Models (/v1/conversation API) ---
-#
-# Only free models are verified to respond as themselves.
-# Premium model names (claude-sonnet, claude-opus, gpt-oss-120b,
-# qwen-3-235b, qwen-3-coder-480b, deepseek-v3-1, mistral-large,
-# pixtral-large) are accepted by the API but silently fall back
-# to Qwen 3.5 30B without a paid Leo Premium subscription.
+from ._http import Session
+from .exceptions import APIError
 
-ClaudeHaiku = "claude-haiku"
+ClaudeHaiku = "claude-3-haiku"
+ClaudeSonnet = "claude-3-sonnet"
+ClaudeOpus = "claude-opus"
+GptLuna = "bedrock-openai.gpt-5.6-luna"
+GptTerra = "bedrock-openai.gpt-5.6-terra"
+GptOss120b = "gpt-oss-120b"
+Qwen36 = "qwen-14b-instruct"
+Qwen38 = "qwen-3-235b"
+Glm47Flash = "glm-4-7-flash"
+Glm53 = "glm-5-3"
+Grok = "bedrock-xai.grok-4.3"
+Kimi = "kimi-k2-5"
+Deepseek = "deepseek-v3-2"
+Nemotron = "nemotron-nano-3-30b"
+MistralLarge = "mistral-large"
+
+# Retain the original constants for callers with saved configurations.
 Llama31_8b = "llama-3-1-8b"
 Llama4Scout = "llama-4-scout"
 Llama4Maverick = "llama-4-maverick"
@@ -56,28 +70,104 @@ MODEL_ALIASES: Dict[str, str] = {
     "gpt_oss": GptOss20b,
     "gpt-oss-20b": GptOss20b,
     "gpt_oss_20b": GptOss20b,
-    "qwen": Qwen3Vl30b,
+    "qwen": Qwen36,
     "qwen-3": Qwen3Vl30b,
     "qwen-3-vl": Qwen3Vl30b,
     "qwen-3-vl-30b": Qwen3Vl30b,
     "qwen_3_vl": Qwen3Vl30b,
     "qwen-vl-30b": Qwen3Vl30b,
     "qwen_vl": Qwen3Vl30b,
+    "sonnet": ClaudeSonnet,
+    "claude-sonnet": ClaudeSonnet,
+    "opus": ClaudeOpus,
+    "luna": GptLuna,
+    "gpt-luna": GptLuna,
+    "gpt-6-luna": GptLuna,
+    "terra": GptTerra,
+    "gpt-oss-120b": GptOss120b,
+    "qwen-3.6": Qwen36,
+    "qwen-3.8": Qwen38,
+    "glm": Glm47Flash,
+    "glm5": Glm53,
+    "grok": Grok,
+    "kimi": Kimi,
+    "deepseek": Deepseek,
+    "nemotron": Nemotron,
+    "mistral": MistralLarge,
 }
+
+_CATALOG_URL = "https://ai-chat.bsg.brave.com/v1/models"
+_FALLBACKS = [
+    {"id": ClaudeHaiku, "name": "Claude Haiku", "maker": "Anthropic",
+     "access": "basic_and_premium", "capabilities": ["chat"],
+     "encrypted": False, "advertised": False},
+    {"id": Automatic, "name": "Automatic", "maker": "Brave",
+     "access": "basic_and_premium", "capabilities": ["chat"],
+     "encrypted": False, "advertised": False},
+]
+_MODELS = {item["id"]: item for item in _FALLBACKS}
+for _item in json.loads(Path(__file__).with_name("models.json").read_text(encoding="utf-8")):
+    _MODELS[_item["id"]] = {**_item, "advertised": True}
 
 
 def resolve_model(name: Optional[str]) -> str:
-    if not name:
+    if not name or not name.strip():
         return ClaudeHaiku
     return MODEL_ALIASES.get(name.strip().lower(), name.strip())
 
 
-def list_models() -> List[str]:
-    return [
-        Automatic, ClaudeHaiku, Llama31_8b,
-        Llama4Scout, Llama4Maverick,
-        GptOss20b, Qwen3Vl30b,
-    ]
+def model_info(name: str) -> Optional[dict]:
+    """Return independent metadata, including whether Brave advertises this model."""
+    return deepcopy(_MODELS.get(resolve_model(name)))
+
+
+def list_models(access: Optional[str] = None) -> List[str]:
+    """List direct chat models; premium includes models shared with the free tier."""
+    if access not in (None, "free", "premium"):
+        raise ValueError("access must be free or premium")
+    return [name for name, item in _MODELS.items()
+            if "chat" in item["capabilities"] and not item["encrypted"]
+            and (access != "free" or item["access"] in ("basic", "basic_and_premium"))]
+
+
+def refresh_models(*, timeout: float = 30) -> List[str]:
+    """Refresh this process's catalog. Imports and list_models() remain offline."""
+    global _MODELS
+    session = Session(timeout=timeout)
+    try:
+        response = session.get(_CATALOG_URL)
+        if response.status_code != 200:
+            raise APIError("Could not fetch Brave model catalog", response.status_code)
+        entries = json.loads(response.text)
+        if not isinstance(entries, list) or not entries:
+            raise ValueError("Expected a nonempty model list")
+        models = {item["id"]: deepcopy(item) for item in _FALLBACKS}
+        seen = set()
+        for entry in entries:
+            options = entry["options"]
+            name = options["name"]
+            capabilities = entry["capabilities"]
+            access = options["access"]
+            encrypted = entry.get("is_near_model", False)
+            if (not isinstance(name, str) or not name or name in seen
+                    or not isinstance(capabilities, list)
+                    or not all(isinstance(value, str) for value in capabilities)
+                    or access not in ("basic", "premium", "basic_and_premium")
+                    or not isinstance(encrypted, bool)
+                    or not isinstance(entry["display_name"], str)
+                    or not isinstance(options["display_maker"], str)):
+                raise ValueError("Invalid model metadata")
+            seen.add(name)
+            models[name] = {"id": name, "name": entry["display_name"],
+                            "maker": options["display_maker"], "access": access,
+                            "capabilities": capabilities, "encrypted": encrypted,
+                            "advertised": True}
+    except (ValueError, KeyError, TypeError) as error:
+        raise APIError("Invalid Brave model catalog") from error
+    finally:
+        session.close()
+    _MODELS = models
+    return list_models()
 
 
 class Role:
