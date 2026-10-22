@@ -1,5 +1,9 @@
 # bleo
 
+<p align="center">
+  <img src="logo.png" alt="Bleo logo" width="220">
+</p>
+
 Unofficial Python client for Brave Leo, using Python 3.10+ with **zero runtime dependencies**. Haiku (`claude-3-haiku`) is the default requested model in the API and CLI.
 
 ```sh
