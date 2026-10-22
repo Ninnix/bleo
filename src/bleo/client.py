@@ -10,7 +10,7 @@ import time
 
 from ._http import Session
 from .exceptions import APIError, AuthError, BleoError, RatelimitError
-from .models import ClaudeHaiku, History, Message, Role, model_info, resolve_model
+from .models import ClaudeHaiku, History, Message, Qwen38, Role, list_models, model_info, resolve_model
 
 _BASE = 'https://ai-chat.bsg.brave.com'
 _PREMIUM_BASE = 'https://ai-chat-premium.bsg.brave.com'
@@ -260,6 +260,22 @@ class Bleo:
 
     def ask(self, prompt, *, remember=None, model=None):
         return ''.join(self.stream(prompt, remember=remember, model=model))
+
+    def ask_with_image(self, prompt, image, *, remember=None, model=None):
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError('Prompt must not be empty')
+        if not isinstance(image, str) or not image.startswith(('https://', 'data:image/')):
+            raise ValueError('Image must be an HTTPS URL or image data URL')
+        selected = resolve_model(model or self.model)
+        info = model_info(selected)
+        if not info or 'vision' not in info['capabilities']:
+            selected = Qwen38 if model_info(Qwen38) and 'vision' in model_info(Qwen38)['capabilities'] else next(
+                (name for name in list_models()
+                 if (info := model_info(name)) and 'vision' in info['capabilities']), None)
+        if not selected:
+            raise ValueError('No vision-capable Brave model is available')
+        content = [prompt, {'type': 'image_url', 'image_url': {'url': image}}]
+        return self.ask(content, remember=remember, model=selected)
 
     def ask_stream(self, prompt, *, remember=None, model=None):
         return self.stream(prompt, remember=remember, model=model)

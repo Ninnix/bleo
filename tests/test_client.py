@@ -90,6 +90,15 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(blocks[0], {'type': 'text', 'text': 'Describe'})
         self.assertEqual(blocks[1], prompt[1])
 
+    def test_image_call_uses_vision_model_when_default_is_text_only(self):
+        client = self.client(completion())
+        self.assertEqual(client.ask_with_image('Review this image', 'https://images.example.test/photo.jpg'), 'OK')
+        payload = client._client.payload()
+        self.assertEqual(payload['model'], 'qwen-3-235b')
+        blocks = payload['messages'][0]['content']
+        self.assertEqual(blocks[0], {'type': 'text', 'text': 'Review this image'})
+        self.assertEqual(blocks[1]['image_url']['url'], 'https://images.example.test/photo.jpg')
+
     def test_invalid_content_and_non_chat_models_fail_before_network(self):
         client = self.client()
         for prompt in ('', '  ', None, [], [42], [{}]):

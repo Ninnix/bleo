@@ -29,6 +29,8 @@ with Bleo(history=True) as client:
 
 `ask()`, `stream()` and `ask_stream()` accept `model=` and `remember=` overrides. History is off by default. All three methods record a user/assistant pair only after a successful complete reply. Failed or cancelled streams leave history intact. `reset()` clears it; `disable_history()` clears it and turns it off. Consume the whole stream to complete a turn.
 
+`ask_with_image(prompt, image)` accepts an HTTPS image URL or image data URL. If the selected model is text-only, it selects an available vision-capable model for that request.
+
 ## Models
 
 The bundled snapshot comes from [Brave's live catalog](https://ai-chat.bsg.brave.com/v1/models), checked on 2026-10-21. IDs are the API's wire names: their spelling can differ from the displayed model version.
