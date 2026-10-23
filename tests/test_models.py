@@ -3,7 +3,7 @@ import json
 import unittest
 from unittest.mock import patch
 
-from bleo import (APIError, Automatic, ClaudeHaiku, ClaudeSonnet, GptLuna, History,
+from bleo import (APIError, Automatic, ClaudeHaiku, ClaudeSonnet, DefaultModel, GptLuna, History,
                   Llama31_8b, Qwen36, list_models, model_info, refresh_models, resolve_model)
 from bleo import models
 from helpers import Raw
@@ -23,10 +23,11 @@ class ModelTests(unittest.TestCase):
         self.addCleanup(setattr, models, '_MODELS', self.original)
 
     def test_defaults_and_legacy_constants_remain_compatible(self):
-        self.assertEqual(resolve_model(None), ClaudeHaiku)
+        self.assertEqual(DefaultModel, GptLuna)
+        self.assertEqual(resolve_model(None), GptLuna)
         self.assertEqual(resolve_model('claude-haiku'), 'claude-3-haiku')
-        self.assertEqual(resolve_model('  '), ClaudeHaiku)
-        self.assertEqual(History().model, ClaudeHaiku)
+        self.assertEqual(resolve_model('  '), GptLuna)
+        self.assertEqual(History().model, GptLuna)
         self.assertEqual(resolve_model('llama'), Llama31_8b)
         self.assertNotIn(Llama31_8b, list_models())
         self.assertFalse(model_info('haiku')['advertised'])
@@ -78,7 +79,7 @@ class ModelTests(unittest.TestCase):
         session.get.assert_called_once_with('https://ai-chat.bsg.brave.com/v1/models')
         session.close.assert_called_once()
         self.assertTrue(model_info('new-model')['advertised'])
-        self.assertEqual(resolve_model(None), ClaudeHaiku)
+        self.assertEqual(resolve_model(None), GptLuna)
 
     def test_refresh_uses_wire_name_and_filters_capabilities(self):
         premium = entry('paid', options={'name': 'wire-id', 'display_maker': 'Maker', 'access': 'premium'})

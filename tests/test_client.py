@@ -1,13 +1,14 @@
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from http.client import IncompleteRead
+import base64
 import json
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from bleo import APIError, AuthError, Bleo, ClaudeHaiku, GptLuna, RatelimitError
-from bleo.client import _make_digest, _make_hmac_signature
+from bleo.client import _image_data_url, _make_digest, _make_hmac_signature
 from helpers import Raw, ScriptedTransport, chunk, completion, sse
 
 
@@ -25,10 +26,10 @@ class ClientTests(unittest.TestCase):
         self.addCleanup(client.close)
         return client
 
-    def test_haiku_is_default_in_client_and_history(self):
+    def test_luna_is_default_in_client_and_history(self):
         with Bleo() as client:
-            self.assertEqual(client.model, ClaudeHaiku)
-            self.assertEqual(client.history.model, ClaudeHaiku)
+            self.assertEqual(client.model, GptLuna)
+            self.assertEqual(client.history.model, GptLuna)
 
     def test_current_endpoint_payload_and_utf8_signature(self):
         client = self.client(completion(), pre_shared_key='test-key')
@@ -36,7 +37,7 @@ class ClientTests(unittest.TestCase):
         method, url, options = client._client.calls[0]
         self.assertEqual((method, url), ('POST', 'https://ai-chat.bsg.brave.com/v1/chat/completions'))
         payload = client._client.payload()
-        self.assertEqual(payload['model'], 'claude-3-haiku')
+        self.assertEqual(payload['model'], GptLuna)
         self.assertEqual(payload['messages'], [{'role': 'user', 'content': [{'type': 'text', 'text': 'Città 🦆'}]}])
         self.assertEqual(payload['brave_capability'], ['chat'])
         self.assertTrue(payload['stream'])
@@ -78,9 +79,9 @@ class ClientTests(unittest.TestCase):
 
     def test_alias_override_does_not_change_default(self):
         client = self.client(completion())
-        client.ask('hello', model='luna')
-        self.assertEqual(client._client.payload()['model'], GptLuna)
-        self.assertEqual(client.model, ClaudeHaiku)
+        client.ask('hello', model='haiku')
+        self.assertEqual(client._client.payload()['model'], ClaudeHaiku)
+        self.assertEqual(client.model, GptLuna)
 
     def test_multimodal_blocks_are_preserved(self):
         client = self.client(completion())
@@ -90,14 +91,47 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(blocks[0], {'type': 'text', 'text': 'Describe'})
         self.assertEqual(blocks[1], prompt[1])
 
-    def test_image_call_uses_vision_model_when_default_is_text_only(self):
-        client = self.client(completion())
-        self.assertEqual(client.ask_with_image('Review this image', 'https://images.example.test/photo.jpg'), 'OK')
+    def test_image_call_uses_vision_model_when_selected_model_is_text_only(self):
+        client = self.client(completion(), model=ClaudeHaiku)
+        encoded = 'data:image/png;base64,' + base64.b64encode(b'\x89PNG\r\n\x1a\nimage').decode()
+        with patch('bleo.client._image_data_url', return_value=encoded):
+            self.assertEqual(client.ask_with_image('Review this image', 'https://images.example.test/photo.jpg'), 'OK')
         payload = client._client.payload()
         self.assertEqual(payload['model'], 'qwen-3-235b')
         blocks = payload['messages'][0]['content']
         self.assertEqual(blocks[0], {'type': 'text', 'text': 'Review this image'})
-        self.assertEqual(blocks[1]['image_url']['url'], 'https://images.example.test/photo.jpg')
+        self.assertEqual(blocks[1]['image_url']['url'], encoded)
+
+    def test_image_call_keeps_default_when_vision_capable(self):
+        client = self.client(completion())
+        encoded = 'data:image/png;base64,' + base64.b64encode(b'\x89PNG\r\n\x1a\nimage').decode()
+        with patch('bleo.client._image_data_url', return_value=encoded):
+            self.assertEqual(client.ask_with_image('Review this image', 'https://images.example.test/photo.jpg'), 'OK')
+        self.assertEqual(client._client.payload()['model'], GptLuna)
+
+    def test_remote_image_is_downloaded_and_inlined(self):
+        data = b'\x89PNG\r\n\x1a\nimage'
+        response = Mock()
+        response.headers.get_content_type.return_value = 'image/png'
+        response.read.return_value = data
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        opener = Mock()
+        opener.open.return_value = response
+        address = ('family', 0, 0, '', ('93.184.216.34', 443))
+        with patch('bleo.client.socket.getaddrinfo', return_value=[address]), \
+                patch('bleo.client.build_opener', return_value=opener):
+            result = _image_data_url('https://images.example.test/photo.png')
+        self.assertEqual(result, 'data:image/png;base64,' + base64.b64encode(data).decode())
+        opener.open.assert_called_once()
+
+    def test_image_data_rejects_invalid_bytes_and_private_hosts(self):
+        with self.assertRaisesRegex(ValueError, 'valid JPEG'):
+            _image_data_url('data:image/png;base64,AA==')
+        address = ('family', 0, 0, '', ('127.0.0.1', 443))
+        with patch('bleo.client.socket.getaddrinfo', return_value=[address]), \
+                self.assertRaisesRegex(ValueError, 'public host'):
+            _image_data_url('https://localhost/image.png')
 
     def test_invalid_content_and_non_chat_models_fail_before_network(self):
         client = self.client()

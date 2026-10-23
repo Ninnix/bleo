@@ -26,9 +26,9 @@ class CliTests(unittest.TestCase):
              patch('builtins.input', side_effect=inputs), redirect_stdout(self.output), redirect_stderr(self.errors):
             cli.main()
 
-    def test_one_shot_uses_haiku_and_closes(self):
+    def test_one_shot_uses_luna_and_closes(self):
         self.run_cli(['hello'], completion())
-        self.assertEqual(self.options['model'], ClaudeHaiku)
+        self.assertEqual(self.options['model'], GptLuna)
         self.assertEqual(self.output.getvalue(), 'OK\n')
         self.assertTrue(self.transport.closed)
 
@@ -48,6 +48,19 @@ class CliTests(unittest.TestCase):
         self.assertIn('bedrock-openai.gpt-5.6-luna', text)
         self.assertNotIn('claude-3-sonnet', text)
         self.assertEqual(self.transport.calls, [])
+
+    def test_models_defaults_to_free_catalog(self):
+        self.run_cli(['--models'])
+        text = self.output.getvalue()
+        self.assertIn('Models · Bleo · free', text)
+        self.assertIn('claude-3-haiku', text)
+        self.assertNotIn('claude-3-sonnet', text)
+
+    def test_models_all_includes_premium_catalog(self):
+        self.run_cli(['--models-all'])
+        text = self.output.getvalue()
+        self.assertIn('Models · Bleo', text)
+        self.assertIn('claude-3-sonnet', text)
 
     def test_refresh_models_is_explicit(self):
         with patch('bleo.cli.refresh_models') as refresh:
@@ -72,11 +85,11 @@ class CliTests(unittest.TestCase):
         self.assertTrue(self.transport.closed)
 
     def test_interactive_model_switch_and_clear(self):
-        self.run_cli([], completion(), inputs=['/model luna', 'hello', '/clear', '/q'])
-        self.assertEqual(self.client.model, GptLuna)
-        self.assertEqual(self.transport.payload()['model'], GptLuna)
+        self.run_cli([], completion(), inputs=['/model haiku', 'hello', '/clear', '/q'])
+        self.assertEqual(self.client.model, ClaudeHaiku)
+        self.assertEqual(self.transport.payload()['model'], ClaudeHaiku)
         self.assertEqual(self.client.history.messages, [])
-        self.assertEqual(self.client.history.model, GptLuna)
+        self.assertEqual(self.client.history.model, ClaudeHaiku)
 
     def test_read_file_commits_history(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -14,6 +14,7 @@ ClaudeSonnet = "claude-3-sonnet"
 ClaudeOpus = "claude-opus"
 GptLuna = "bedrock-openai.gpt-5.6-luna"
 GptTerra = "bedrock-openai.gpt-5.6-terra"
+DefaultModel = GptLuna
 GptOss120b = "gpt-oss-120b"
 Qwen36 = "qwen-14b-instruct"
 Qwen38 = "qwen-3-235b"
@@ -112,7 +113,7 @@ for _item in json.loads(Path(__file__).with_name("models.json").read_text(encodi
 
 def resolve_model(name: Optional[str]) -> str:
     if not name or not name.strip():
-        return ClaudeHaiku
+        return DefaultModel
     return MODEL_ALIASES.get(name.strip().lower(), name.strip())
 
 
@@ -190,7 +191,7 @@ class Message:
 
 @dataclass
 class History:
-    model: str = ClaudeHaiku
+    model: str = DefaultModel
     messages: List[Message] = field(default_factory=list)
 
     def add_user(self, content: Content) -> None:

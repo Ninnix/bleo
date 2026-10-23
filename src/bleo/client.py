@@ -4,21 +4,78 @@ import base64
 import hashlib
 import hmac
 from http.client import HTTPException
+import ipaddress
 import json
 import os
+import re
+import socket
 import time
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from ._http import Session
 from .exceptions import APIError, AuthError, BleoError, RatelimitError
-from .models import ClaudeHaiku, History, Message, Qwen38, Role, list_models, model_info, resolve_model
+from .models import DefaultModel, History, Message, Qwen38, Role, list_models, model_info, resolve_model
 
 _BASE = 'https://ai-chat.bsg.brave.com'
 _PREMIUM_BASE = 'https://ai-chat-premium.bsg.brave.com'
 _CONVERSATION = '/v1/chat/completions'
-_DEFAULT_MODEL = ClaudeHaiku
+_DEFAULT_MODEL = DefaultModel
 _KNOWN_X_BRAVE_KEY = 'qztbjzBqJueQZLFkwTTJrieu8Vw3789u'
 _KNOWN_PRE_SHARED_KEY = 'a1a5e78387143d981cc13d52445983b7b9884c2a46009122710b675dfe11e280'
 _UA = 'bleo/0.2.0'
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024
+_IMAGE_TYPES = {
+    'image/jpeg': lambda data: data.startswith(b'\xff\xd8\xff'),
+    'image/png': lambda data: data.startswith(b'\x89PNG\r\n\x1a\n'),
+    'image/gif': lambda data: data.startswith((b'GIF87a', b'GIF89a')),
+    'image/webp': lambda data: data.startswith(b'RIFF') and data[8:12] == b'WEBP',
+}
+
+
+def _validate_image_url(url):
+    parsed = urlsplit(url)
+    if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError('Image URL must use public HTTPS')
+    try:
+        addresses = socket.getaddrinfo(parsed.hostname, parsed.port or 443, type=socket.SOCK_STREAM)
+    except OSError:
+        raise ValueError('Image host could not be resolved') from None
+    if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
+        raise ValueError('Image URL must point to a public host')
+
+
+class _ImageRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_image_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _image_data_url(image):
+    if image.startswith('data:'):
+        match = re.fullmatch(r'data:(image/(?:jpeg|png|gif|webp));base64,([A-Za-z0-9+/]*={0,2})', image)
+        if not match:
+            raise ValueError('Image data must be a supported base64 image')
+        mime, encoded = match.groups()
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except ValueError:
+            raise ValueError('Image data must be valid base64') from None
+    else:
+        if not isinstance(image, str):
+            raise ValueError('Image must be an HTTPS URL or image data URL')
+        _validate_image_url(image)
+        request = Request(image, headers={'User-Agent': _UA, 'Accept': 'image/avif,image/webp,image/png,image/jpeg,image/gif'})
+        with build_opener(_ImageRedirect()).open(request, timeout=30) as response:
+            mime = response.headers.get_content_type().lower()
+            data = response.read(_MAX_IMAGE_BYTES + 1)
+    if len(data) > _MAX_IMAGE_BYTES:
+        raise ValueError('Image must be 20 MB or smaller')
+    if mime == 'application/octet-stream':
+        mime = next((kind for kind, matches in _IMAGE_TYPES.items() if matches(data)), '')
+    if mime not in _IMAGE_TYPES or not _IMAGE_TYPES[mime](data):
+        raise ValueError('Image must be a valid JPEG, PNG, GIF, or WebP file')
+    return f'data:{mime};base64,' + base64.b64encode(data).decode('ascii')
 
 
 def _make_digest(body):
@@ -54,7 +111,7 @@ def _content(value):
 class Bleo:
     """Brave Leo client using the current chat-completions protocol and Python stdlib.
 
-    The default requested model is Claude Haiku. Premium credentials,
+    The default requested model is GPT-6 Luna. Premium credentials,
     service keys and signing key IDs can be supplied explicitly or via environment.
     max_retries counts total attempts. Long Retry-After delays are raised to the caller.
     """
@@ -264,7 +321,7 @@ class Bleo:
     def ask_with_image(self, prompt, image, *, remember=None, model=None):
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError('Prompt must not be empty')
-        if not isinstance(image, str) or not image.startswith(('https://', 'data:image/')):
+        if not isinstance(image, str):
             raise ValueError('Image must be an HTTPS URL or image data URL')
         selected = resolve_model(model or self.model)
         info = model_info(selected)
@@ -274,7 +331,7 @@ class Bleo:
                  if (info := model_info(name)) and 'vision' in info['capabilities']), None)
         if not selected:
             raise ValueError('No vision-capable Brave model is available')
-        content = [prompt, {'type': 'image_url', 'image_url': {'url': image}}]
+        content = [prompt, {'type': 'image_url', 'image_url': {'url': _image_data_url(image)}}]
         return self.ask(content, remember=remember, model=selected)
 
     def ask_stream(self, prompt, *, remember=None, model=None):
